@@ -138,8 +138,7 @@ def softmax(array, div=None):
     return t/sum_t
 
 
-from sklearn.decomposition import PCA as PCA_sklearn
-# Computes the leading Singular Value Decomposition components of the input data matrix after centering 
+
 # (subtracting the mean across samples).
 #
 # Parameters:
@@ -176,8 +175,9 @@ W_TOLERANCE = 1e-8
 
 def verify_omega(omega):
     if len(omega.shape)!=2:
-        raise Exception('omega should be a 2-d tensor of sizes KxD, where K is the amount of partitions and D is the amount of features.\n'\                        
-                        +' Current omega tensor is of shape '+str(omega.shape))
+        raise Exception('omega should be a 2-d tensor of sizes KxD, where K is the amount of partitions and D is the amount of features.\n'
+                        + ' Current omega tensor is of shape ' + str(omega.shape))
+
     sum_dims= np.sum(omega,axis=0)
     if np.max(sum_dims)>1+OMEGA_TOLERANCE:
         raise Exception('The sum over omega should be 1. One of the partition coordinates sums to '+str(np.max(sum_dims)))
