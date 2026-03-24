@@ -6,9 +6,8 @@ import numpy as np
 import scipy
 import scipy.spatial
 from scipy.spatial.distance import cdist
-from sklearn.metrics import pairwise_distances
-from sklearn.manifold import _utils
-from sklearn.neighbors import NearestNeighbors
+
+import scipy.linalg
 
 
 import new_binary_search_perplexity 
@@ -51,7 +50,7 @@ def throw_exception(val, var_name, bigger_than_val=None):
 #   C : numpy.ndarray or scalar
 #       The negative entropy computed along the specified axis. Returns a scalar if A is 1D or axis is None.
 def FP_calc_neg_entropy(A,axis=None):        
-    B = np.finfo(float).eps+A    
+    B = np.finfo(np.float64).eps+A    
     
     if axis is None:
         
@@ -100,20 +99,23 @@ def get_dist(x,diag_metric=None, is_exact=True, n_neighbors=None):
 
     
     if is_x_svd:
-        U, D, VT = x
+        U, S_val, VT = x
 
-        eigs, vecs= np.linalg.eig((VT*diag_metric[None,:])@VT.T)
+        M = (VT*diag_metric[None,:])@VT.T        
+        M = (M + M.T) / 2.0       
+        eigs, vecs= scipy.linalg.eigh(M)
         eigs= np.real(eigs)
         vecs= np.real(vecs)
         eigs[eigs<0.]=0.
         eigs = np.sqrt(eigs)
         
-        distances= pairwise_distances( (U*D[None,:]) @(vecs*eigs[None,:]), squared=True)
+        projected_data = (U*S_val[None,:]) @ (vecs*eigs[None,:])        
+        distances = cdist(projected_data, projected_data, metric='sqeuclidean')
         
     else:
-        metric= np.sqrt(diag_metric[None,:])
-        metric[metric<0.]=0.
-        distances= pairwise_distances(x*metric,squared=True)
+        metric= np.sqrt(np.maximum(diag_metric, 0.))
+        weighted_x = x * metric[None, :]        
+        distances = cdist(weighted_x, weighted_x, metric='sqeuclidean')
 
 
     return distances
@@ -130,7 +132,7 @@ def softmax(array, div=None):
     sum_t= np.sum(t)
     
     # If the sum is too small (underflow), use uniform distribution
-    if sum_t < np.finfo(float).eps:
+    if sum_t < np.finfo(np.float64).eps:
         t=t*0+1
         sum_t= np.sum(t)
     return t/sum_t
@@ -153,14 +155,14 @@ from sklearn.decomposition import PCA as PCA_sklearn
 #       Singular values as a 1D array of length R.
 #   VT : numpy.ndarray
 #       Right singular vectors of shape (R, D).
-def SVD_mean_shifted(data,r):
-    pca=  PCA_sklearn(n_components=r)
-    pca.fit(data)
-    D = pca.singular_values_+0.
-    VT = pca.components_+0.
-    transformed_data = pca.transform(data)
-    U = transformed_data / D[None,:]
-    return (U,D, VT)
+def SVD_mean_shifted(data,r):    
+    mean = np.mean(data, axis=0)    
+    data_centered = data - mean            
+    U, S, VT = scipy.linalg.svd(data_centered, full_matrices=False)            
+    U = U[:, :r]    
+    S = S[:r]    
+    VT = VT[:r, :]        
+    return (U, S, VT)
 
 
 ########################################################
@@ -174,8 +176,8 @@ W_TOLERANCE = 1e-8
 
 def verify_omega(omega):
     if len(omega.shape)!=2:
-        raise Exception('omega should be a 2-d tensor of sizes KxD, where K is the amount of partitions and D is the amount of features.\n'\
-                        +' Current omega tensor is of shape '+omega.shape)
+        raise Exception('omega should be a 2-d tensor of sizes KxD, where K is the amount of partitions and D is the amount of features.\n'\                        
+                        +' Current omega tensor is of shape '+str(omega.shape))
     sum_dims= np.sum(omega,axis=0)
     if np.max(sum_dims)>1+OMEGA_TOLERANCE:
         raise Exception('The sum over omega should be 1. One of the partition coordinates sums to '+str(np.max(sum_dims)))
@@ -186,13 +188,13 @@ def verify_omega(omega):
 
 def verify_W(W):
     if not isinstance(W, list) and not isinstance(W, np.ndarray):
-        raise Exception('W should be a list of 2-d tensor of size NxN, or 3-d tensor of size KxNxN. Current tensor is of type '+type(W))
+        raise Exception('W should be a list of 2-d tensor of size NxN, or 3-d tensor of size KxNxN. Current tensor is of type '+str(type(W)))
         
         
     for i in range(len(W)):
         if len(W[i].shape)!=2:
-            raise Exception('W should be a 3-d tensor of sizes KxNxN, where K is the amount of partitions and N is the amount of points.\n'\
-                            +' Current W tensor in its '+str(i)+' position is of shape '+W[i].shape)
+            raise Exception('W should be a 3-d tensor of sizes KxNxN, where K is the amount of partitions and N is the amount of points.\n'\                            
+                            +' Current W tensor in its '+str(i)+' position is of shape '+str(W[i].shape))
         
         if isinstance(W[i],np.ndarray):           
             sum_dims= np.sum(W[i],axis=-1)
@@ -242,8 +244,8 @@ def FP_get_W(x, omega, perplexity, is_parallel=True, block_size=100):
     K= len(omega)
     
     
-    W= np.zeros((K, N, N),dtype=np.double)
-    new_inv_epsilons = np.zeros((K,N),dtype=np.double)
+    W= np.zeros((K, N, N),dtype=np.float64)    
+    new_inv_epsilons = np.zeros((K,N),dtype=np.float64)
     
     for s in range(K):
 
@@ -450,7 +452,7 @@ def FP_get_val(x, W, omega, perplexity, delta, get_seperated_terms=False):
     
     entropy_omega=0.
     if delta>0.:
-        entropy_omega = np.finfo(float).eps+ omega
+        entropy_omega = np.finfo(np.float64).eps+ omega
         entropy_omega = delta*(np.sum(FP_calc_neg_entropy(entropy_omega,axis=0))+dim*np.log(K))
 
         
@@ -678,7 +680,7 @@ class FP:
             
         else:
             if len(np.shape(x))!=2:
-                raise Execption('The input data should be etiher a tuple containing the SVD decomposition, or a samples-by-coordinates matrix.')
+                raise Exception('The input data should be either a tuple containing the SVD decomposition, or a samples-by-coordinates matrix.')
             N= len(x)
             self.dim = np.shape(x)[1]
         
